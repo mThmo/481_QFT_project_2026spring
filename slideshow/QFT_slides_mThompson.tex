@@ -1,0 +1,441 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+% To print slides WITH speaker notes, uncomment:
+% \setbeameroption{show notes}
+
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+
+% Placeholder helper: shows image if present, else a labeled box.
+\newcommand{\circuitfig}[3][\linewidth]{%
+  \IfFileExists{#2}{\includegraphics[width=#1]{#2}}{%
+    \fbox{\parbox[c][3.2cm][c]{0.9\linewidth}{\centering \texttt{#2}\\[2pt]\small #3}}}%
+}
+
+\title[QFT, QPE, and Shor's Algorithm]{The Quantum Fourier Transform,\\ Phase Estimation, and Shor's Algorithm}
+\author{M.~Thompson}
+\institute{Math 481 --- Complex Analysis}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+\note{
+The punchline of this talk: quantum computers can factor big numbers fast, and
+the engine that makes it work is the Fourier transform --- the same one from
+this course, applied to a quantum state. Four steps: DFT, QFT, phase
+estimation, Shor's. Don't memorize matrices; track what each piece is doing.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{Roadmap}
+  \vfill
+  \begin{center}
+  {\Huge DFT $\rightarrow$ QFT $\rightarrow$ QPE $\rightarrow$ Shor's}
+  \end{center}
+  \vfill
+  \begin{center}
+  Goal: factor a large integer $N$ in time polynomial in $\log N$.
+  \end{center}
+  \vfill
+\end{frame}
+\note{
+Each arrow means ``the previous thing, used as a tool.'' The QFT is the DFT in
+disguise. QPE is a clever use of the QFT. Shor's is QPE pointed at one special
+matrix. If the audience remembers one thing, it's this chain --- the rest of the
+talk just fills in the arrows. Classically the best factoring algorithms are
+sub-exponential; Shor's is polynomial in the number of digits, which is why it
+breaks RSA in principle.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{The DFT: a change of basis from roots of unity}
+  \[
+    \hat{x}_k = \frac{1}{\sqrt{N}}\sum_{l=0}^{N-1} x_l\, \omega^{kl},
+    \qquad \omega = e^{-2\pi i/N}
+  \]
+  \begin{block}{Orthogonality of roots of unity}
+  \[
+    \frac{1}{N}\sum_{k=0}^{N-1}\omega^{mk} =
+    \begin{cases} 1 & N \mid m \\ 0 & \text{else} \end{cases}
+  \]
+  Proof for $N \nmid m$: with $r = \omega^m \neq 1$, geometric series gives
+  \(
+    \frac{1}{N}\cdot\frac{r^N - 1}{r-1} = \frac{1}{N}\cdot\frac{e^{-2\pi i m}-1}{r-1} = 0.
+  \)
+  \end{block}
+\end{frame}
+\note{
+Remind them: the DFT takes a list of numbers to a new list; each output is a
+weighted sum where the weights are roots of unity --- points evenly spaced on
+the unit circle. The block is the one proof worth showing in full, and it's
+pure complex analysis: if N doesn't divide m, the powers of omega-to-the-m walk
+around the circle and the geometric series sums to zero, because $r^N = 1$
+exactly. All the roots cancel. This cancellation is the reason the Fourier
+basis is orthonormal, hence the reason the DFT matrix is unitary, hence ---
+much later --- the reason the quantum circuit is even allowed to exist. One
+slide of complex analysis powers the whole talk.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{Qubits}
+  \begin{columns}
+  \begin{column}{0.5\textwidth}
+    \[
+      \vert\psi\rangle = \alpha\vert 0\rangle + \beta\vert 1\rangle,
+      \qquad |\alpha|^2 + |\beta|^2 = 1
+    \]
+    \[
+      n \text{ qubits } \longleftrightarrow\ \mathbb{C}^{2^n} = (\mathbb{C}^2)^{\otimes n}
+    \]
+  \end{column}
+  \begin{column}{0.45\textwidth}
+    \begin{center}
+      \circuitfig[0.62\linewidth]{Bloch_sphere.png}{Bloch sphere}
+    \end{center}
+  \end{column}
+  \end{columns}
+\end{frame}
+\note{
+Skip slide --- say ``we did this in class.'' A qubit is a unit vector in C2;
+n qubits live in a $2^n$-dimensional space via tensor products. The picture is
+the Bloch sphere: after modding out the global phase, a single qubit state is a
+point on an ordinary sphere --- and for us complex analysts, that sphere is the
+Riemann sphere: the ratio beta over alpha lives in C union infinity, and
+stereographic projection puts it on S2. North pole is 0, south pole is 1. Gates
+act as rotations of this sphere. Move on quickly.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{The gate set}
+
+\begin{columns}
+\begin{column}{\textwidth}
+\[
+H = \frac{1}{\sqrt{2}}
+\begin{bmatrix}
+1 & 1\\
+1 & -1
+\end{bmatrix}
+\qquad
+R_k =
+\begin{bmatrix}
+1 & 0\\
+0 & e^{2\pi i/2^k}
+\end{bmatrix}
+\]
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+
+\begin{columns}
+\begin{column}{\textwidth}
+\[
+\mathrm{SWAP} =
+\begin{bmatrix}
+1&0&0&0\\
+0&0&1&0\\
+0&1&0&0\\
+0&0&0&1
+\end{bmatrix}
+\quad
+C(R_k) =
+\begin{bmatrix}
+1&0&0&0\\
+0&1&0&0\\
+0&0&1&0\\
+0&0&0&e^{2\pi i/2^k}
+\end{bmatrix}
+\]
+\end{column}
+\end{columns}
+
+\end{frame}
+\note{
+Four gates, the whole toolkit. Hadamard turns a definite 0 or 1 into an even
+mix --- it creates superpositions. R-k leaves 0 alone and spins the 1-component
+by a fixed angle: it writes a phase. SWAP exchanges two wires. Controlled R-k
+fires the phase only when the control qubit is 1 --- point at the bottom-right
+entry, that single $e^{2\pi i/2^k}$ is its only action. On the Bloch sphere
+picture from the previous slide, the R-k gates are rotations about the vertical
+axis. Everything in the QFT circuit is built from just these.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{QFT: the DFT factorizes over qubits}
+  \[
+    F_{2^n}\vert j_1 \cdots j_n\rangle =
+    \frac{1}{\sqrt{2^n}}
+    \left(\vert 0\rangle + e^{2\pi i\, 0.j_n}\vert 1\rangle\right)
+    \otimes \cdots \otimes
+    \left(\vert 0\rangle + e^{2\pi i\, 0.j_1 \cdots j_n}\vert 1\rangle\right)
+  \]
+  \vfill
+  \begin{center}
+    One qubit per factor \ $\Rightarrow$ \ $O(n^2)$ gates instead of $O(2^n)$.
+  \end{center}
+\end{frame}
+\note{
+The QFT is the DFT applied to amplitudes of a quantum state. Naively that's a
+$2^n$ by $2^n$ matrix --- hopeless. But when N is a power of two, the output
+miraculously splits into a tensor product of single-qubit states; that's the
+formula, with $0.j \ldots$ meaning a binary fraction. Each factor is one qubit
+holding one phase, built by a Hadamard plus a few controlled rotations. So an
+exponential-size transform collapses to about n-squared gates. Plain-language
+version to say out loud: the QFT takes information stored in amplitudes and
+re-writes it as phases --- angles --- spread across the qubits. Hold onto that;
+phases are exactly what the next tool reads out.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{QFT circuit}
+  \begin{center}
+    \circuitfig{QFT_circuit.png}{QFT circuit}
+  \end{center}
+\end{frame}
+\note{
+Walk it left to right: each wire gets a Hadamard, then controlled rotations ---
+the S, T, R4, R5 boxes are R-k gates --- reach over from the lower qubits to
+stamp in smaller and smaller phase corrections, the binary-fraction digits from
+the last formula. The crossings at the far right are SWAPs putting the qubits
+back in order. Don't trace every gate; the point is the circuit is short and
+regular --- that regularity is the n-squared efficiency made visible.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{QPE: eigenvalues of unitaries are phases}
+  \begin{columns}
+  \begin{column}{0.55\textwidth}
+    If $U\vert\psi\rangle = \lambda\vert\psi\rangle$ with $U$ unitary, then
+    \[
+      |\lambda| = 1, \qquad \lambda = e^{2\pi i\theta},\ \ \theta \in [0,1).
+    \]
+    \begin{block}{Proof}
+    \(
+      \|\vert\psi\rangle\| = \|U\vert\psi\rangle\| = |\lambda| \|\vert\psi\rangle\|
+      \Rightarrow |\lambda| = 1.
+    \)
+    \end{block}
+    Goal of QPE: find $\theta$.
+  \end{column}
+  \begin{column}{0.4\textwidth}
+    \begin{center}
+      \circuitfig[0.75\linewidth]{Phase_UnitCircle.PNG}{eigenvalue on the unit circle}
+    \end{center}
+  \end{column}
+  \end{columns}
+\end{frame}
+\note{
+Second tool. A unitary preserves norms, so the one-line proof on the slide
+shows every eigenvalue has modulus one --- eigenvalues live ON the unit circle,
+as in the picture. So an eigenvalue is nothing but an angle theta. Phase
+estimation asks: given the matrix and an eigenvector, find that angle. The
+catch: applying U to its eigenvector only multiplies by a global phase, and
+global phases are invisible to measurement --- probabilities only see absolute
+values. So we need a trick to move theta somewhere measurable. That trick is
+phase kickback, next slide.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{Phase kickback}
+  \[
+    \tfrac{1}{\sqrt2}(\vert 0\rangle + \vert 1\rangle)\otimes\vert\psi\rangle
+    \ \xrightarrow{\ C(U)\ }\
+    \tfrac{1}{\sqrt2}\bigl(\vert 0\rangle + e^{2\pi i\theta}\vert 1\rangle\bigr)\otimes\vert\psi\rangle
+  \]
+  \vfill
+  \begin{center}
+    When we do a controlled gate, controlled by a qubit that has been put into superposition
+    by a Hadamard gate, the control basically gets "reversed."
+    
+    \vspace{15pt}
+    
+    The target is unchanged, the phase lands on the \emph{control}.
+  \end{center}
+\end{frame}
+\note{
+The cleverest move in the talk; slow down here. Normally the control decides
+and the target gets acted on. We flip it: put the CONTROL in superposition and
+feed the TARGET an eigenvector. On the 0-branch nothing happens; on the
+1-branch U hits psi --- but U on its eigenvector is just multiplication by
+$e^{2\pi i \theta}$, a number, which slides off psi and attaches to the
+1-branch of the control. End result: psi is untouched, and the phase has jumped
+``backwards'' onto the control qubit. The gate ran in reverse, in a sense ---
+the target reprogrammed the control. That rescues the invisible phase: it now
+sits on a qubit we can play with.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{One ancilla: estimate $\theta$ by sampling}
+  \begin{center}
+    \circuitfig[0.55\linewidth]{1qubitancilla_QPE.PNG}{1-ancilla QPE circuit}
+  \end{center}
+  \[
+    P(0) = \cos^2(\pi\theta), \qquad P(1) = \sin^2(\pi\theta)
+  \]
+\end{frame}
+\note{
+This circuit is the smallest possible phase estimator: Hadamard, controlled-U,
+Hadamard, measure. The second Hadamard makes the 0 and 1 branches interfere,
+and the interference angle is theta --- giving the biased coin on the slide:
+probability cos-squared of pi theta for 0, sin-squared for 1. So run it a
+thousand times, count zeros, solve backwards for theta --- a Monte Carlo
+estimate, like estimating a coin's bias by flipping it repeatedly. It works but
+it's slow: lots of shots for a few digits. Next slide: get all the digits in
+ONE shot.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{One ancilla: where $\cos^2(\pi\theta)$ comes from}
+  After kickback, apply the second Hadamard to $\tfrac{1}{\sqrt2}\bigl(\vert 0\rangle + e^{2\pi i\theta}\vert 1\rangle\bigr)$:
+  \[
+    H\vert 0\rangle = \tfrac{1}{\sqrt2}(\vert 0\rangle + \vert 1\rangle),
+    \qquad
+    H\vert 1\rangle = \tfrac{1}{\sqrt2}(\vert 0\rangle - \vert 1\rangle)
+  \]
+  \[
+    \tfrac{1}{\sqrt2}\bigl(\vert 0\rangle + e^{2\pi i\theta}\vert 1\rangle\bigr)
+    \ \xrightarrow{\ H\ }\
+    \tfrac{1}{2}\bigl(1 + e^{2\pi i\theta}\bigr)\vert 0\rangle
+    + \tfrac{1}{2}\bigl(1 - e^{2\pi i\theta}\bigr)\vert 1\rangle
+  \]
+  \vfill
+  Born rule, using $|1 \pm e^{2\pi i\theta}|^2 = 2 \pm 2\cos(2\pi\theta)$:
+  \[
+    P(0) = \tfrac{1}{4}\bigl|1 + e^{2\pi i\theta}\bigr|^2 = \cos^2(\pi\theta),
+    \qquad
+    P(1) = \tfrac{1}{4}\bigl|1 - e^{2\pi i\theta}\bigr|^2 = \sin^2(\pi\theta)
+  \]
+\end{frame}
+
+%----------------------------------------------------------------------
+\begin{frame}{Many ancillas: the kickbacks applied to the ancilla are effectively a QFT}
+  \[
+    \tfrac{1}{\sqrt{2^t}}
+    \left(\vert 0\rangle + e^{2\pi i\, 2^{t-1}\theta}\vert 1\rangle\right)
+    \otimes \cdots \otimes
+    \left(\vert 0\rangle + e^{2\pi i\, \theta}\vert 1\rangle\right)
+    \;=\; F_{2^t}\vert\tilde\theta\rangle
+  \]
+  \vfill
+  \begin{center}
+    Apply $F_{2^t}^{-1}$, measure: $\theta$ in binary, one shot.
+  \end{center}
+\end{frame}
+\note{
+Use t ancillas; the k-th one controls U to the power 2-to-the-k, so it kicks
+back theta doubled k times --- each ancilla captures a different binary digit
+of theta. Now compare the resulting product state with the QFT factorization
+from earlier: identical. The pile of kicked-back phases IS the Fourier
+transform of theta written in binary. Theta is hiding in Fourier space --- and
+we own the machine that inverts that. Run the inverse QFT, measure, and the
+binary digits of theta drop out directly. One shot, no statistics; more
+ancillas means more digits. THIS is why we built the QFT first: it's the
+read-out device for phases.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{QPE circuit}
+  \begin{center}
+    \circuitfig{QPE_circuit.png}{QPE circuit}
+  \end{center}
+\end{frame}
+\note{
+The whole algorithm in one picture, three blocks: Hadamards make the
+superposition; the controlled powers of U do the kickback, loading theta into
+Fourier space; the inverse-QFT box decodes it and we measure the binary answer.
+Bottom wire is the eigenvector, which just sits there donating its phase ---
+note it comes out unchanged.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{Shor's: the number theory}
+  Order of $a$: smallest $r$ with $a^r \equiv 1 \pmod N$. \quad Let $b = a^{r/2}$ ($r$ even):
+  \[
+    (b-1)(b+1) = b^2 - 1 \equiv 0 \pmod{N}
+  \]
+  \vfill
+  If $b \not\equiv \pm 1$: $N$ divides the product but neither factor
+  $\Rightarrow$ its primes split between them
+  \[
+    \Rightarrow\ \gcd(b-1,\ N)\ \text{is a nontrivial factor of}\ N.
+  \]
+\end{frame}
+\note{
+The classical half. Pick a coprime to N; its powers cycle with period r, the
+order. If r is even, set b = a to the r-over-2, so b squared is 1 mod N, and
+b-squared-minus-1 factors as (b-1)(b+1). N divides that product. Now the key
+step --- say it slowly: provided b isn't congruent to plus or minus 1, N divides
+NEITHER factor alone. The only way to divide a product but neither piece is for
+N's primes to SPLIT --- some land in (b-1), the rest in (b+1). So gcd(b-1, N)
+scoops up exactly the primes that landed on the left: it can't be 1 (some are
+there) and can't be N (not all are), so it's an honest factor. And gcds are
+cheap --- Euclid's algorithm. Random a works with probability at least one half.
+Conclusion: factoring reduces to finding r.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{Shor's: order-finding is QPE}
+  \[
+    U\vert x\rangle = \vert ax \bmod N\rangle
+    \qquad\Longrightarrow\qquad
+    \text{eigenvalues } e^{2\pi i\, s/r}
+  \]
+  \vfill
+  \begin{center}
+    QPE measures $\phi \approx s/r$
+    \ $\rightarrow$ continued fractions give $r$
+    \ $\rightarrow$ $\gcd(a^{r/2}\pm 1,\, N)$.
+  \end{center}
+  \vfill
+  \begin{center}
+  \small Example: $N=15$, $a=7$: $r=4$, $7^2 \equiv 4$, $\gcd(3,15)=3$, $\gcd(5,15)=5$.
+  \end{center}
+\end{frame}
+\note{
+The quantum half: choose U to be multiplication by a, mod N. It's unitary
+because multiplication by an invertible element just permutes the basis states.
+And because applying it r times returns you to start, its eigenvalues are
+exactly the r-th roots of unity, e to the 2 pi i s over r --- the same circle
+points from slide one. So QPE reads off a phase s over r, and the denominator
+hands us the order. Pipeline: measure a decimal close to s/r, clean it into an
+exact fraction with continued fractions, read r, finish with two gcds. Worked
+example: N = 15, a = 7. The order is 4 since 7-to-the-4th is 2401, which is 1
+mod 15. Then b = 49 = 4 mod 15, and gcd(3,15) = 3, gcd(5,15) = 5: out pops
+15 = 3 times 5. One detail I'm sweeping under the rug: we can't prepare an
+eigenvector since they depend on r --- but the state ``1'' happens to be an
+equal superposition of all of them, and QPE handles the superposition by
+linearity, returning a random s over r. That's in the paper if anyone asks.
+}
+
+%----------------------------------------------------------------------
+\begin{frame}{Takeaways}
+  \begin{center}
+  \Large
+  roots of unity $\rightarrow$ QFT $\rightarrow$ QPE $\rightarrow$ Shor's
+  \end{center}
+  \vfill
+  \begin{itemize}
+    \item QFT: amplitudes $\to$ phases, in $O(n^2)$ gates.
+    \item QPE: kick an eigenphase onto ancillas, decode with $F^{-1}$.
+    \item Shor's: factoring $=$ order-finding $=$ QPE on $\vert x\rangle \mapsto \vert ax \bmod N\rangle$.
+  \end{itemize}
+\end{frame}
+\note{
+Close the loop by running the chain backwards: Shor's needs the order;
+order-finding is phase estimation; phase estimation reads phases with the
+inverse QFT; and the QFT exists because roots of unity are orthogonal --- the
+complex analysis we started with. Honest caveat to end on: today's hardware
+doesn't have nearly enough error-corrected logical qubits to factor anything
+RSA-sized, so this is a theorem about the future. Stop and take questions.
+}
+
+\end{document}
